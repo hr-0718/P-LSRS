@@ -11,7 +11,7 @@
   </style>
 </head>
 <body>
-  <h2>文字エンコード / デコード</h2>
+  <h2>エニグマ（Enigma M3）</h2>
 
   <div class="row">
     <label>キー（0〜255）:
@@ -30,64 +30,154 @@
   </div>
 
   <div class="row">
-    <label>エンコード結果（半角英数字）：</label><br>
+    <label>エンコード結果（半角英字）：</label><br>
     <textarea id="encoded"></textarea>
   </div>
 
-  <script>
-    // アルファベット優先の Base62
-    const BASE62 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+<script>
+// ===============================
+//   エニグマ（Enigma M3）
+// ===============================
 
-    function base62Index(c) {
-      const code = c.charCodeAt(0);
-      if (code >= 0x41 && code <= 0x5A) return code - 0x41;          // A-Z (0-25)
-      if (code >= 0x61 && code <= 0x7A) return code - 0x61 + 26;     // a-z (26-51)
-      if (code >= 0x30 && code <= 0x39) return code - 0x30 + 52;     // 0-9 (52-61)
-      return 0;
+const A = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+const ROTORS = {
+  I:   { wiring: "EKMFLGDQVZNTOWYHXUSPAIBRCJ", notch: "Q" },
+  II:  { wiring: "AJDKSIRUXBLHWTMCQGZNPYFVOE", notch: "E" },
+  III: { wiring: "BDFHJLCPRTXVZNYEIWGAKMUSQO", notch: "V" }
+};
+
+const REFLECTORS = {
+  B: "YRUHQSLDPXNGOKMIEBFZCWVJAT"
+};
+
+function makePlugboard(pairs) {
+  let map = {};
+  for (let c of A) map[c] = c;
+  for (let [a, b] of pairs) {
+    map[a] = b;
+    map[b] = a;
+  }
+  return map;
+}
+
+class Rotor {
+  constructor(wiring, notch, ring, pos) {
+    this.wiring = wiring;
+    this.notch = notch;
+    this.ring = ring;
+    this.pos = pos;
+    this.inverse = this.makeInverse(wiring);
+  }
+  makeInverse(w) {
+    let inv = Array(26);
+    for (let i = 0; i < 26; i++) {
+      inv[w.charCodeAt(i) - 65] = A[i];
     }
+    return inv.join("");
+  }
+  step() { this.pos = (this.pos + 1) % 26; }
+  atNotch() { return A[this.pos] === this.notch; }
+  forward(c) {
+    let idx = (c.charCodeAt(0) - 65 + this.pos - this.ring + 26) % 26;
+    let out = this.wiring[idx];
+    let outIdx = (out.charCodeAt(0) - 65 - this.pos + this.ring + 26) % 26;
+    return A[outIdx];
+  }
+  backward(c) {
+    let idx = (c.charCodeAt(0) - 65 + this.pos - this.ring + 26) % 26;
+    let out = this.inverse[idx];
+    let outIdx = (out.charCodeAt(0) - 65 - this.pos + this.ring + 26) % 26;
+    return A[outIdx];
+  }
+}
 
-    function encodeGarble(str, key) {
-      const encoder = new TextEncoder();          // UTF-8
-      const bytes = encoder.encode(str);
-      let out = "";
+class Enigma {
+  constructor(rotorNames, ringSettings, positions, reflectorName, plugPairs) {
+    this.plug = makePlugboard(plugPairs);
+    this.rotors = [
+      new Rotor(ROTORS[rotorNames[0]].wiring, ROTORS[rotorNames[0]].notch, ringSettings[0], positions[0]),
+      new Rotor(ROTORS[rotorNames[1]].wiring, ROTORS[rotorNames[1]].notch, ringSettings[1], positions[1]),
+      new Rotor(ROTORS[rotorNames[2]].wiring, ROTORS[rotorNames[2]].notch, ringSettings[2], positions[2])
+    ];
+    this.reflector = REFLECTORS[reflectorName];
+  }
 
-      for (let i = 0; i < bytes.length; i++) {
-        const x = bytes[i] ^ key;                // XOR
-
-        const hi = Math.floor(x / 62);
-        const lo = x % 62;
-
-        out += BASE62[hi] + BASE62[lo];
-      }
-      return out;
+  stepRotors() {
+    if (this.rotors[1].atNotch()) {
+      this.rotors[1].step();
+      this.rotors[2].step();
     }
-
-    function decodeGarble(encoded, key) {
-      const bytes = [];
-      const clean = encoded.replace(/[^A-Za-z0-9]/g, ""); // 念のため英数字以外除去
-
-      for (let i = 0; i < clean.length; i += 2) {
-        const hi = base62Index(clean[i]);
-        const lo = base62Index(clean[i + 1]);
-        const x = hi * 62 + lo;
-        bytes.push(x ^ key);
-      }
-
-      const decoder = new TextDecoder();         // UTF-8
-      return decoder.decode(new Uint8Array(bytes));
+    if (this.rotors[0].atNotch()) {
+      this.rotors[1].step();
     }
+    this.rotors[0].step();
+  }
 
-    function onEncode() {
-      const key = Number(document.getElementById("key").value) & 0xFF;
-      const plain = document.getElementById("plain").value;
-      document.getElementById("encoded").value = encodeGarble(plain, key);
-    }
+  encryptChar(c) {
+    if (!A.includes(c)) return c;
 
-    function onDecode() {
-      const key = Number(document.getElementById("key").value) & 0xFF;
-      const encoded = document.getElementById("encoded").value.trim();
-      document.getElementById("plain").value = decodeGarble(encoded, key);
+    this.stepRotors();
+
+    c = this.plug[c];
+
+    for (let r of this.rotors) c = r.forward(c);
+
+    c = this.reflector[c.charCodeAt(0) - 65];
+
+    for (let i = 2; i >= 0; i--) c = this.rotors[i].backward(c);
+
+    c = this.plug[c];
+
+    return c;
+  }
+
+  encrypt(str) {
+    let out = "";
+    for (let c of str.toUpperCase()) {
+      if (A.includes(c)) out += this.encryptChar(c);
     }
-  </script>
+    return out;
+  }
+}
+
+// ===============================
+//  UI 接続（A〜Z専用）
+// ===============================
+
+function onEncode() {
+  const key = Number(document.getElementById("key").value) & 0xFF;
+  const plain = document.getElementById("plain").value.toUpperCase().replace(/[^A-Z]/g, "");
+
+  const enigma = new Enigma(
+    ["I", "II", "III"],
+    [0, 0, 0],
+    [key % 26, (key+1)%26, (key+2)%26],
+    "B",
+    [["A","G"], ["E","T"]]
+  );
+
+  const encrypted = enigma.encrypt(plain);
+  document.getElementById("encoded").value = encrypted;
+}
+
+function onDecode() {
+  const key = Number(document.getElementById("key").value) & 0xFF;
+  const encoded = document.getElementById("encoded").value.trim().toUpperCase().replace(/[^A-Z]/g, "");
+
+  const enigma = new Enigma(
+    ["I", "II", "III"],
+    [0, 0, 0],
+    [key % 26, (key+1)%26, (key+2)%26],
+    "B",
+    [["A","G"], ["E","T"]]
+  );
+
+  const decrypted = enigma.encrypt(encoded);
+  document.getElementById("plain").value = decrypted;
+}
+</script>
+
+
 </body>
 </html>
