@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <title>文字化けエンコード / デコード</title>
+  <title>P-LSRS</title>
   <style>
     body { font-family: sans-serif; padding: 16px; }
     textarea { width: 100%; height: 80px; }
@@ -11,15 +11,17 @@
   </style>
 </head>
 <body>
-  <h2>文字化けエンコード / デコード（XOR + Base62）</h2>
+  <h2>文字エンコード / デコード</h2>
 
   <div class="row">
-    <label>キー（0〜255）: <input id="key" type="number" min="0" max="255" value="90"></label>
+    <label>キー（0〜255）:
+      <input id="key" type="number" min="0" max="255" value="23">
+    </label>
   </div>
 
   <div class="row">
     <label>元のテキスト：</label><br>
-    <textarea id="plain">破壊する</textarea>
+    <textarea id="plain"></textarea>
   </div>
 
   <div class="row">
@@ -33,13 +35,14 @@
   </div>
 
   <script>
-    const BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    // アルファベット優先の Base62
+    const BASE62 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
     function base62Index(c) {
       const code = c.charCodeAt(0);
-      if (code >= 0x30 && code <= 0x39) return code - 0x30;          // 0-9
-      if (code >= 0x41 && code <= 0x5A) return code - 0x41 + 10;     // A-Z
-      if (code >= 0x61 && code <= 0x7A) return code - 0x61 + 36;     // a-z
+      if (code >= 0x41 && code <= 0x5A) return code - 0x41;          // A-Z (0-25)
+      if (code >= 0x61 && code <= 0x7A) return code - 0x61 + 26;     // a-z (26-51)
+      if (code >= 0x30 && code <= 0x39) return code - 0x30 + 52;     // 0-9 (52-61)
       return 0;
     }
 
@@ -50,8 +53,10 @@
 
       for (let i = 0; i < bytes.length; i++) {
         const x = bytes[i] ^ key;                // XOR
+
         const hi = Math.floor(x / 62);
         const lo = x % 62;
+
         out += BASE62[hi] + BASE62[lo];
       }
       return out;
@@ -59,12 +64,15 @@
 
     function decodeGarble(encoded, key) {
       const bytes = [];
-      for (let i = 0; i < encoded.length; i += 2) {
-        const hi = base62Index(encoded[i]);
-        const lo = base62Index(encoded[i + 1]);
+      const clean = encoded.replace(/[^A-Za-z0-9]/g, ""); // 念のため英数字以外除去
+
+      for (let i = 0; i < clean.length; i += 2) {
+        const hi = base62Index(clean[i]);
+        const lo = base62Index(clean[i + 1]);
         const x = hi * 62 + lo;
-        bytes.push(x ^ key);                     // XOR で復元
+        bytes.push(x ^ key);
       }
+
       const decoder = new TextDecoder();         // UTF-8
       return decoder.decode(new Uint8Array(bytes));
     }
